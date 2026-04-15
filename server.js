@@ -3,7 +3,6 @@ const cors = require("cors");
 const sqlite3 = require("sqlite3");
 const { open } = require("sqlite");
 const bcrypt = require("bcryptjs");
-require("./db");
 
 // DB
 const dbPromise = open({
@@ -29,68 +28,6 @@ function normalizarFecha(fecha) {
 
   return fecha;
 }
-
-// ------------------------------------------------------
-// CREAR TABLAS
-// ------------------------------------------------------
-(async () => {
-  const db = await dbPromise;
-
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS productos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nombre TEXT,
-      precio REAL,
-      sede TEXT
-    );
-  `);
-  await db.exec(`
-    ALTER TABLE productos ADD COLUMN tipo TEXT DEFAULT 'venta'
-  `).catch(() => { });
-
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS inventario_diario (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      fecha TEXT,
-      producto TEXT,
-      inicial INTEGER,
-      producidas INTEGER,
-      vendidas INTEGER,
-      final INTEGER,
-      total_vendido REAL,
-      sede TEXT
-    );
-  `);
-
-  //  NUEVA ESTRUCTURA FINANCIERA
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS cierre_dia (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      fecha TEXT,
-      sede TEXT,
-      base REAL,
-      gastos REAL,
-      gasto_desc TEXT, 
-      transferencias REAL DEFAULT 0,
-      adicionales REAL DEFAULT 0,
-      adicional_desc TEXT,
-      total_ventas REAL,
-      total_dia REAL,
-      ganancia REAL,
-      UNIQUE(fecha, sede)
-    );
-  `);
-
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS usuarios (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      usuario TEXT UNIQUE,
-      password TEXT
-    );
-  `);
-
-  console.log("Base de datos lista ");
-})();
 
 // ------------------------------------------------------
 // PRODUCTOS
@@ -599,6 +536,65 @@ app.get("/crear-admin", async (req, res) => {
 // ------------------------------------------------------
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("Servidor corriendo en puerto " + PORT);
-});
+(async () => {
+  const db = await dbPromise;
+
+  console.log("⏳ Inicializando base de datos...");
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS productos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre TEXT,
+      precio REAL,
+      sede TEXT,
+      tipo TEXT DEFAULT 'venta'
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS inventario_diario (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha TEXT,
+      producto TEXT,
+      inicial INTEGER,
+      producidas INTEGER,
+      vendidas INTEGER,
+      final INTEGER,
+      total_vendido REAL,
+      sede TEXT
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS cierre_dia (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fecha TEXT,
+      sede TEXT,
+      base REAL,
+      gastos REAL,
+      gasto_desc TEXT, 
+      transferencias REAL DEFAULT 0,
+      adicionales REAL DEFAULT 0,
+      adicional_desc TEXT,
+      total_ventas REAL,
+      total_dia REAL,
+      ganancia REAL,
+      UNIQUE(fecha, sede)
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      usuario TEXT UNIQUE,
+      password TEXT
+    );
+  `);
+
+  console.log("✅ DB lista, arrancando servidor...");
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log("Servidor corriendo en puerto " + PORT);
+  });
+
+})();
