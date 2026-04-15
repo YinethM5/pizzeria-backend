@@ -527,7 +527,7 @@ app.get("/crear-admin", async (req, res) => {
 
   await db.run(
     "INSERT INTO usuarios (usuario, password) VALUES (?, ?)",
-    ["yefersonlucio", bcrypt.hashSync("1411", 10)]
+    ["yeisonpaul", bcrypt.hashSync("1525", 10)]
   );
 
   res.send("Usuario creado ✅");
