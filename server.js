@@ -54,6 +54,27 @@ function calcularTotalMasas(data) {
   return total;
 }
 
+app.get("/seed", async (req, res) => {
+  const db = await dbPromise;
+
+  const productos = [
+    ['Masas', 11.25],
+    ['Caja grande', 0],
+    ['Caja mediana', 0],
+    ['Caja pequeña', 0]
+  ];
+
+  for (let [nombre, precio] of productos) {
+    await db.run(
+      `INSERT OR REPLACE INTO productos (nombre, precio, sede, tipo)
+       VALUES (?, ?, ?, 'venta')`,
+      [nombre, precio, "quinta1"]
+    );
+  }
+
+  res.send("Productos creados ✅");
+});
+
 // ------------------------------------------------------
 // PRODUCTOS
 // ------------------------------------------------------
