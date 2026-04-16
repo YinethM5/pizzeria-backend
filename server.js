@@ -319,6 +319,10 @@ app.post("/guardar-todo", async (req, res) => {
   try {
 
     await db.exec("BEGIN TRANSACTION");
+    await db.run(
+  `DELETE FROM inventario_diario WHERE fecha = ? AND sede = ?`,
+  [fecha, sede]
+);
 
     for (let item of productos) {
 
