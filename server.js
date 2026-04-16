@@ -3,6 +3,7 @@ const cors = require("cors");
 const sqlite3 = require("sqlite3");
 const { open } = require("sqlite");
 const bcrypt = require("bcryptjs");
+require("./db");
 
 // DB
 const dbPromise = open({
