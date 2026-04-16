@@ -67,17 +67,16 @@ db.run(`
 //  INSERTAR PRODUCTOS AUTOMÁTICAMENTE SI NO EXISTEN
 // -------------------------------------------------------
 const productos = [
-  ['Masas', 10],
-  ['Cajas pequeñas', 1],
-  ['Cajas grandes', 1],
-  ['Colas $0.50', 0.5],
-  ['Colas litro', 1],
-  ['Colas $1.50', 1.5],
-  ['Colas $1.75', 1.75],
-  ['Fuze Tea pequeño', 0.75],
-  ['Fuze Tea grande', 1.5],
-  ['Jugo del Valle', 0.5],
-  ['Agua', 0.5],
+  // BASE DEL SISTEMA
+  ['Masas', 11.25],
+  ['Caja grande', 0],
+  ['Caja mediana', 0],
+  ['Caja pequeña', 0],
+  ['Cola personal', 0.75],
+  ['Cola de litro', 1.50],
+  ['Jugo Botella', 0.50],
+  ['Fuze Tea litro', 1.50],
+  ['Botella de Agua', 0.50],
 ];
 
 const sedes = ["quinta1", "quinta2"];

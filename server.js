@@ -157,10 +157,37 @@ app.post("/inventario", async (req, res) => {
     return res.json({ error: "Producto no existe" });
   }
 
-  const total = (inicial || 0) + (producidas || 0);
-  const vendidas = total - (queda || 0);
-  const final = queda;
-  const total_vendido = vendidas * prod.precio;
+const total = Number(inicial || 0) + Number(producidas || 0);
+const vendidas = total - Number(queda || 0);
+const final = Number(queda || 0);
+ let total_vendido = vendidas * prod.precio;
+
+// 🔥 AJUSTE ESPECIAL PARA MASAS
+if (producto === "Masas") {
+
+const cajas_grandes = Number(req.body.cajas_grandes || 0);
+const cajas_medianas = Number(req.body.cajas_medianas || 0);
+const cajas_pequenas = Number(req.body.cajas_pequenas || 0);
+
+const especiales_familiar = Number(req.body.especiales_familiar || 0);
+const especiales_mediana = Number(req.body.especiales_mediana || 0);
+const especiales_pequena = Number(req.body.especiales_pequena || 0);
+
+  // BASE
+  total_vendido = vendidas * 11.25;
+
+  // RESTAS (clásicas)
+  total_vendido -= cajas_grandes * 0.25;
+  total_vendido -= cajas_medianas * 1.50;
+
+  // SUMA (pequeñas)
+  total_vendido += cajas_pequenas * 0.375;
+
+  // ESPECIALES
+  total_vendido += especiales_familiar * 3.75;
+  total_vendido += especiales_mediana * 2.25;
+  total_vendido += especiales_pequena * 1.25;
+}
 
   await db.run(
     `INSERT INTO inventario_diario 
@@ -301,10 +328,42 @@ app.post("/guardar-todo", async (req, res) => {
 
       if (!prod) continue;
 
-      const total = (item.inicial || 0) + (item.producidas || 0);
-      const vendidas = total - (item.queda || 0);
-      const final = item.queda;
-      const total_vendido = vendidas * prod.precio;
+      const inicial = Number(item.inicial || 0);
+      const producidas = Number(item.producidas || 0);
+      const queda = Number(item.queda || 0);
+
+      const total = inicial + producidas;
+      const vendidas = total - queda;
+      const final = queda;
+
+      let total_vendido = vendidas * (prod.precio || 0);
+
+      // 🔥 AJUSTE ESPECIAL PARA MASAS
+      if (item.producto === "Masas") {
+
+        const cajas_grandes = Number(item.cajas_grandes || 0);
+        const cajas_medianas = Number(item.cajas_medianas || 0);
+        const cajas_pequenas = Number(item.cajas_pequenas || 0);
+
+        const especiales_familiar = Number(item.especiales_familiar || 0);
+        const especiales_mediana = Number(item.especiales_mediana || 0);
+        const especiales_pequena = Number(item.especiales_pequena || 0);
+
+        // BASE
+        total_vendido = vendidas * 11.25;
+
+        // RESTAS (clásicas)
+        total_vendido -= cajas_grandes * 0.25;
+        total_vendido -= cajas_medianas * 1.50;
+
+        // SUMA (pequeñas)
+        total_vendido += cajas_pequenas * 0.375;
+
+        // ESPECIALES (las que superan 11.25)
+        total_vendido += especiales_familiar * 3.75;
+        total_vendido += especiales_mediana * 2.25;
+        total_vendido += especiales_pequena * 1.25;
+      }
 
       await db.run(`
         INSERT INTO inventario_diario
@@ -313,8 +372,8 @@ app.post("/guardar-todo", async (req, res) => {
       `, [
         fecha,
         item.producto,
-        item.inicial,
-        item.producidas,
+        inicial,
+        producidas,
         vendidas,
         final,
         total_vendido,
