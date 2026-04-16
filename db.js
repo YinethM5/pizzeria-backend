@@ -1,4 +1,4 @@
-const fs = require('fs');
+
 // db.js
 const sqlite3 = require('sqlite3').verbose();
 
@@ -95,30 +95,33 @@ db.serialize(() => {
   // -------------------------------------------------------
   // INSERTAR PRODUCTOS (VENTA)
   // -------------------------------------------------------
-  sedes.forEach(sede => {
-    productos.forEach(([nombre, precio]) => {
-      db.run(
-        `INSERT OR REPLACE INTO productos (nombre, precio, sede, tipo)
-         VALUES (?, ?, ?, 'venta')`,
-        [nombre, precio, sede]
-      );
-    });
-  });
+const insertProducto = db.prepare(`
+  INSERT OR REPLACE INTO productos (nombre, precio, sede, tipo)
+  VALUES (?, ?, ?, 'venta')
+`);
 
+sedes.forEach(sede => {
+  productos.forEach(([nombre, precio]) => {
+    insertProducto.run(nombre, precio, sede);
+  });
+});
+
+insertProducto.finalize();
   // -------------------------------------------------------
   // INSERTAR INGREDIENTES
   // -------------------------------------------------------
-  sedes.forEach(sede => {
-    ingredientes.forEach(nombre => {
-      db.run(
-        `INSERT OR REPLACE INTO productos (nombre, precio, sede, tipo)
-         VALUES (?, ?, ?, 'ingrediente')`,
-        [nombre, 0, sede]
-      );
-    });
-  });
+ const insertIngrediente = db.prepare(`
+  INSERT OR REPLACE INTO productos (nombre, precio, sede, tipo)
+  VALUES (?, ?, ?, 'ingrediente')
+`);
 
+sedes.forEach(sede => {
+  ingredientes.forEach(nombre => {
+    insertIngrediente.run(nombre, 0, sede);
+  });
 });
+
+insertIngrediente.finalize(); });
 
 // -------------------------------------------------------
 // EXPORTAR DB
