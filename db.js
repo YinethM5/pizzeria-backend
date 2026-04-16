@@ -1,4 +1,9 @@
-// db.js
+const fs = require('fs');
+
+if (fs.existsSync('./pizzeria.db')) {
+  fs.unlinkSync('./pizzeria.db');
+  console.log('🗑️ DB eliminada para reinicio limpio');
+}// db.js
 const sqlite3 = require('sqlite3').verbose();
 
 // -------------------------------------------------------
