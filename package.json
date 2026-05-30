@@ -8,9 +8,23 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
+    "expo": "^55.0.23",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
     "sqlite": "^4.2.1",
     "sqlite3": "^5.1.7"
-  }
+  },
+  "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YinethM5/pizzeria-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/YinethM5/pizzeria-backend/issues"
+  },
+  "homepage": "https://github.com/YinethM5/pizzeria-backend#readme"
 }

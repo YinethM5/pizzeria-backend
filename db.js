@@ -90,7 +90,7 @@ db.serialize(() => {
     "Maíz","Champiñones","Tocino"
   ];
 
-  const sedes = ["quinta1", "quinta2"];
+  const sedes = ["sede1", "sede2"];
 
   // -------------------------------------------------------
   // INSERTAR PRODUCTOS (VENTA)
