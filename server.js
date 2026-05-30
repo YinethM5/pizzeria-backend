@@ -1,18 +1,37 @@
+require("dotenv").config();
+process.env.DATABASE_URL = "postgresql://postgres.rpwnbwuelsimnislbflz:Yurani1518-@aws-1-sa-east-1.pooler.supabase.com:5432/postgres";
 const express = require("express");
 const cors = require("cors");
-const sqlite3 = require("sqlite3");
-const { open } = require("sqlite");
 const bcrypt = require("bcryptjs");
+const { Pool } = require("pg");
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // ---------------- DB ----------------
-const dbPromise = open({
-    filename: "pizzeria.db",
-    driver: sqlite3.Database
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
 });
+
+const db = {
+    get: async (query, params) => {
+        const res = await pool.query(query, params);
+        return res.rows[0] || null;
+    },
+    all: async (query, params) => {
+        const res = await pool.query(query, params);
+        return res.rows;
+    },
+    run: async (query, params) => {
+        const res = await pool.query(query, params);
+        return { lastID: res.rows[0]?.id, changes: res.rowCount };
+    },
+    exec: async (query) => {
+        await pool.query(query);
+    }
+};
 
 // ---------------- HELPERS ----------------
 function normalizarFecha(fecha) {
@@ -35,7 +54,6 @@ function calc(inicial, producidas, queda) {
     };
 }
 
-// FUNCIÓN CENTRAL DE MASAS
 function calcularTotalMasas(data) {
     const vendidas = Number(data.vendidas || 0);
     let total = vendidas * 11.25;
@@ -73,7 +91,6 @@ function calcularTotalMasas(data) {
     return total;
 }
 
-// ── Descuenta cajas solo de pizzas llevar ──────────────
 async function descontarCajas(db, masasData, fecha, sede) {
     const tipos = ["tradicional", "vegetariana", "tocino", "carnivora", "petete", "pollo", "cali"];
 
@@ -94,13 +111,10 @@ async function descontarCajas(db, masasData, fecha, sede) {
     ];
 
     for (const { producto, cantidad } of cajas) {
-
-
-        const anterior = await db.get(`
-            SELECT final FROM inventario_diario
-            WHERE producto = ? AND sede = ?
-            ORDER BY id DESC LIMIT 1
-        `, [producto, sede]);
+        const anterior = await db.get(
+            `SELECT final FROM inventario_diario WHERE producto = $1 AND sede = $2 ORDER BY id DESC LIMIT 1`,
+            [producto, sede]
+        );
 
         const inicial = anterior ? anterior.final : 0;
         const final   = inicial - cantidad;
@@ -109,24 +123,22 @@ async function descontarCajas(db, masasData, fecha, sede) {
             throw new Error(`No hay suficientes ${producto} (necesitas ${cantidad}, hay ${inicial})`);
         }
 
-        await db.run(`
-            INSERT INTO inventario_diario
-            (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-            VALUES (?, ?, ?, 0, ?, ?, 0, ?)
-        `, [fecha, producto, inicial, cantidad, final, sede]);
+        await db.run(
+            `INSERT INTO inventario_diario (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
+             VALUES ($1, $2, $3, 0, $4, $5, 0, $6)`,
+            [fecha, producto, inicial, cantidad, final, sede]
+        );
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.get("/debug-productos", async (req, res) => {
-    const db = await dbPromise;
     const rows = await db.all("SELECT nombre, sede FROM productos");
     res.json(rows);
 });
 
 app.get("/seed", async (req, res) => {
-    const db = await dbPromise;
     const productos = [
         ['Masas', 11.25],
         ['Caja grande', 0],
@@ -141,7 +153,8 @@ app.get("/seed", async (req, res) => {
     for (let [nombre, precio] of productos) {
         for (const sede of ["sede1", "sede2"]) {
             await db.run(
-                `INSERT OR REPLACE INTO productos (nombre, precio, sede, tipo) VALUES (?, ?, ?, 'venta')`,
+                `INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, $2, $3, 'venta')
+                 ON CONFLICT (nombre, sede) DO NOTHING`,
                 [nombre, precio, sede]
             );
         }
@@ -150,48 +163,42 @@ app.get("/seed", async (req, res) => {
 });
 
 app.get("/debug-cajas", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
-    const rows = await db.all(`
-        SELECT producto, id, fecha, inicial, vendidas, final 
-        FROM inventario_diario 
-        WHERE producto IN ('Caja mediana', 'Caja pequeña') 
-        AND sede = ?
-        ORDER BY id DESC
-    `, [sede]);
+    const rows = await db.all(
+        `SELECT producto, id, fecha, inicial, vendidas, final 
+         FROM inventario_diario 
+         WHERE producto IN ('Caja mediana', 'Caja pequeña') AND sede = $1
+         ORDER BY id DESC`,
+        [sede]
+    );
     res.json(rows);
 });
 
-
 app.post("/movimiento-stock", async (req, res) => {
-    const db = await dbPromise;
     const { producto, cantidad, sede, descontarMasas } = req.body;
-    const fecha = "2026-01-01";
+    const fecha = new Date().toISOString().split("T")[0];
 
-    const anterior = await db.get(`
-        SELECT final FROM inventario_diario
-        WHERE producto = ? AND sede = ?
-        ORDER BY id DESC LIMIT 1
-    `, [producto, sede]);
+    const anterior = await db.get(
+        `SELECT final FROM inventario_diario WHERE producto = $1 AND sede = $2 ORDER BY id DESC LIMIT 1`,
+        [producto, sede]
+    );
 
     const inicial = anterior ? anterior.final : 0;
     let nuevo = inicial + cantidad;
 
     if (nuevo < 0) return res.json({ ok: false, error: "Stock no puede ser negativo" });
 
-    await db.run(`
-        INSERT INTO inventario_diario
-        (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [fecha, producto, inicial, cantidad > 0 ? cantidad : 0, cantidad < 0 ? Math.abs(cantidad) : 0, nuevo, 0, sede]);
+    await db.run(
+        `INSERT INTO inventario_diario (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7)`,
+        [fecha, producto, inicial, cantidad > 0 ? cantidad : 0, cantidad < 0 ? Math.abs(cantidad) : 0, nuevo, sede]
+    );
 
     if (descontarMasas && cantidad < 0) {
-        const masasAnterior = await db.get(`
-            SELECT final FROM inventario_diario
-            WHERE producto = 'Masas' AND sede = ?
-            ORDER BY id DESC LIMIT 1
-        `, [sede]);
-
+        const masasAnterior = await db.get(
+            `SELECT final FROM inventario_diario WHERE producto = 'Masas' AND sede = $1 ORDER BY id DESC LIMIT 1`,
+            [sede]
+        );
         const masasInicial = masasAnterior ? masasAnterior.final : 0;
         let masasUsadas = Math.abs(cantidad);
         if (producto.toLowerCase().includes("peque")) masasUsadas = masasUsadas / 2;
@@ -199,116 +206,51 @@ app.post("/movimiento-stock", async (req, res) => {
 
         if (masasFinal < 0) return res.json({ ok: false, error: "No hay masas suficientes" });
 
-        await db.run(`
-            INSERT INTO inventario_diario
-            (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [fecha, "Masas", masasInicial, 0, masasUsadas, masasFinal, 0, sede]);
+        await db.run(
+            `INSERT INTO inventario_diario (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
+             VALUES ($1, 'Masas', $2, 0, $3, $4, 0, $5)`,
+            [fecha, masasInicial, masasUsadas, masasFinal, sede]
+        );
     }
 
     res.json({ ok: true, nuevo });
 });
 
-app.post("/registrar-venta", async (req, res) => {
-    const db = await dbPromise;
-    const { tamaño, cantidad, tipo, sede } = req.body;
-    const fecha = new Date().toISOString().split("T")[0];
-
-    try {
-        const masasRow = await db.get(`
-            SELECT final FROM inventario_diario
-            WHERE producto = 'Masas' AND sede = ?
-            ORDER BY id DESC LIMIT 1
-        `, [sede]);
-
-        const masasInicial = masasRow ? masasRow.final : 0;
-        let masasUsadas = 0;
-        if (tamaño === "familiar") masasUsadas = cantidad;
-        if (tamaño === "mediana")  masasUsadas = cantidad;
-        if (tamaño === "pequena")  masasUsadas = cantidad / 2;
-
-        const masasFinal = masasInicial - masasUsadas;
-        if (masasFinal < 0) return res.json({ ok: false, error: "No hay masas suficientes" });
-
-        await db.run(`
-            INSERT INTO inventario_diario
-            (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [fecha, "Masas", masasInicial, 0, masasUsadas, masasFinal, 0, sede]);
-
-        if (tipo === "llevar") {
-            let caja = "";
-            if (tamaño === "familiar") caja = "Caja grande";
-            if (tamaño === "mediana")  caja = "Caja mediana";
-            if (tamaño === "pequena")  caja = "Caja pequeña";
-
-            const cajaRow = await db.get(`
-                SELECT final FROM inventario_diario
-                WHERE producto = ? AND sede = ?
-                ORDER BY id DESC LIMIT 1
-            `, [caja, sede]);
-
-            const cajaInicial = cajaRow ? cajaRow.final : 0;
-            const cajaFinal   = cajaInicial - cantidad;
-
-            if (cajaFinal < 0) return res.json({ ok: false, error: "No hay cajas suficientes" });
-
-            await db.run(`
-                INSERT INTO inventario_diario
-                (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [fecha, caja, cajaInicial, 0, cantidad, cajaFinal, 0, sede]);
-        }
-
-        res.json({ ok: true });
-    } catch (err) {
-        console.log(err);
-        res.json({ ok: false, error: "Error registrando venta" });
-    }
-});
-
 app.get("/resumen", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
-    const rows = await db.all(`SELECT * FROM resumen_diario WHERE sede = ? ORDER BY fecha DESC`, [sede]);
+    const rows = await db.all(`SELECT * FROM resumen_diario WHERE sede = $1 ORDER BY fecha DESC`, [sede]);
     res.json(rows);
 });
 
 app.get("/stock-actual", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
-    const rows = await db.all(`
-        SELECT producto, final FROM inventario_diario
-        WHERE id IN (
-            SELECT MAX(id) FROM inventario_diario WHERE sede = ? GROUP BY producto
-        )
-    `, [sede]);
+    const rows = await db.all(
+        `SELECT producto, final FROM inventario_diario
+         WHERE id IN (SELECT MAX(id) FROM inventario_diario WHERE sede = $1 GROUP BY producto)`,
+        [sede]
+    );
     res.json(rows);
 });
 
 app.get("/productos", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
-    const productos = await db.all(`
-        SELECT nombre, precio FROM productos
-        WHERE sede = ? AND tipo = 'venta'
-        GROUP BY nombre ORDER BY nombre
-    `, [sede]);
+    const productos = await db.all(
+        `SELECT nombre, precio FROM productos WHERE sede = $1 AND tipo = 'venta' GROUP BY nombre, precio ORDER BY nombre`,
+        [sede]
+    );
     res.json(productos);
 });
 
 app.get("/ingredientes", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
-    const ingredientes = await db.all(`
-        SELECT nombre FROM productos
-        WHERE sede = ? AND tipo = 'ingrediente' ORDER BY nombre
-    `, [sede]);
+    const ingredientes = await db.all(
+        `SELECT nombre FROM productos WHERE sede = $1 AND tipo = 'ingrediente' ORDER BY nombre`,
+        [sede]
+    );
     res.json(ingredientes);
 });
 
 app.get("/seed-ingredientes", async (req, res) => {
-    const db = await dbPromise;
     const ingredientes = [
         "Mortadela","Queso","Peperoni","Piña","Harina","Levadura","Azúcar","Mantequilla","Sal",
         "Cajas","Salsa de tomate","Maiz Sabrosa","Porta pizza","Platos de torta número 6",
@@ -318,17 +260,16 @@ app.get("/seed-ingredientes", async (req, res) => {
         "Maíz","Champiñones","Tocino"
     ];
     for (const nombre of ingredientes) {
-        await db.run(`INSERT OR IGNORE INTO productos (nombre, precio, sede, tipo) VALUES (?, 0, 'sede1', 'ingrediente')`, [nombre]);
-        await db.run(`INSERT OR IGNORE INTO productos (nombre, precio, sede, tipo) VALUES (?, 0, 'sede2', 'ingrediente')`, [nombre]);
+        await db.run(`INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, 0, 'sede1', 'ingrediente') ON CONFLICT DO NOTHING`, [nombre]);
+        await db.run(`INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, 0, 'sede2', 'ingrediente') ON CONFLICT DO NOTHING`, [nombre]);
     }
     res.json({ ok: true });
 });
 
 app.post("/guardar-ingrediente", async (req, res) => {
-    const db = await dbPromise;
     const { nombre, sede } = req.body;
     try {
-        await db.run(`INSERT INTO productos (nombre, precio, sede, tipo) VALUES (?, ?, ?, 'ingrediente')`, [nombre, 0, sede]);
+        await db.run(`INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, 0, $2, 'ingrediente')`, [nombre, sede]);
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -336,24 +277,21 @@ app.post("/guardar-ingrediente", async (req, res) => {
 });
 
 app.post("/inventario", async (req, res) => {
-    const db = await dbPromise;
     let { fecha, producto, inicial, producidas, queda, sede } = req.body;
     fecha = normalizarFecha(fecha);
 
     if (inicial === undefined) {
-        const anterior = await db.get(`
-            SELECT final FROM inventario_diario
-            WHERE producto = ? AND sede = ? AND fecha < ?
-            ORDER BY fecha DESC LIMIT 1
-        `, [producto, sede, fecha]);
+        const anterior = await db.get(
+            `SELECT final FROM inventario_diario WHERE producto = $1 AND sede = $2 AND fecha < $3 ORDER BY fecha DESC LIMIT 1`,
+            [producto, sede, fecha]
+        );
         inicial = anterior ? anterior.final : 0;
     }
 
-    const prod = await db.get("SELECT precio FROM productos WHERE nombre = ? AND sede = ?", [producto, sede]);
+    const prod = await db.get("SELECT precio FROM productos WHERE nombre = $1 AND sede = $2", [producto, sede]);
     if (!prod) return res.json({ error: "Producto no existe" });
 
     const { total, vendidas, final } = calc(inicial, producidas, queda);
-    if (vendidas > inicial + producidas) throw new Error(`No hay suficiente stock de ${producto}`);
     if (queda > total) return res.json({ error: "No puedes tener más de lo que produciste", total_disponible: total, queda });
 
     if (producto === "Masas") {
@@ -373,65 +311,61 @@ app.post("/inventario", async (req, res) => {
     let total_vendido = vendidas * prod.precio;
     if (producto === "Masas") total_vendido = calcularTotalMasas({ vendidas, ...req.body });
 
-    await db.run(`
-        INSERT INTO inventario_diario
-        (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede]);
+    await db.run(
+        `INSERT INTO inventario_diario (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede]
+    );
 
     res.json({ ok: true, total_vendido, vendidas });
 });
 
 app.get("/debug-inventario", async (req, res) => {
-    const db = await dbPromise;
     const rows = await db.all("SELECT * FROM inventario_diario");
     res.json(rows);
 });
 
 app.get("/historial", async (req, res) => {
-    const db = await dbPromise;
     const { sede, desde, hasta } = req.query;
     try {
-        let query = `SELECT fecha, producto, inicial, producidas, vendidas, final FROM inventario_diario WHERE sede = ?`;
+        let query = `SELECT fecha, producto, inicial, producidas, vendidas, final FROM inventario_diario WHERE sede = $1`;
         const params = [sede];
-        if (desde && hasta) { query += ` AND fecha BETWEEN ? AND ?`; params.push(desde, hasta); }
+        if (desde && hasta) { query += ` AND fecha BETWEEN $2 AND $3`; params.push(desde, hasta); }
         query += ` ORDER BY fecha DESC, producto ASC`;
         const rows = await db.all(query, params);
         res.json(rows);
     } catch (err) {
-        console.log(err);
         res.json({ ok: false });
     }
 });
 
-// ── HISTORIAL PIZZAS  ────────────────
 app.get("/historial-pizzas", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
     try {
-        const rows = await db.all(`
-            SELECT r.fecha, r.base, r.total, r.total_final,
-                   v.tipo, v.tamaño, v.modalidad,
-                   SUM(v.cantidad) as cantidad
-            FROM resumen_diario r
-            LEFT JOIN ventas_pizzas v ON v.fecha = r.fecha AND v.sede = r.sede
-            WHERE r.sede = ?
-            GROUP BY r.fecha, v.tipo, v.tamaño, v.modalidad
-            ORDER BY r.fecha DESC
-        `, [sede]);
+        const rows = await db.all(
+            `SELECT r.fecha, r.base, r.total, r.total_final,
+                    v.tipo, v.tamaño, v.modalidad, SUM(v.cantidad) as cantidad
+             FROM resumen_diario r
+             LEFT JOIN ventas_pizzas v ON v.fecha = r.fecha AND v.sede = r.sede
+             WHERE r.sede = $1
+             GROUP BY r.fecha, r.base, r.total, r.total_final, v.tipo, v.tamaño, v.modalidad
+             ORDER BY r.fecha DESC`,
+            [sede]
+        );
         res.json(rows);
     } catch (err) {
-        console.log(err);
         res.json({ ok: false });
     }
 });
 
 app.post("/pagos", async (req, res) => {
-    const db = await dbPromise;
     const { trabajador, monto, fecha, concepto, sede } = req.body;
     if (!trabajador || !monto || !fecha || !sede) return res.json({ ok: false, error: "Faltan datos" });
     try {
-        await db.run(`INSERT INTO pagos (trabajador, monto, fecha, concepto, sede) VALUES (?, ?, ?, ?, ?)`, [trabajador, monto, fecha, concepto || "", sede]);
+        await db.run(
+            `INSERT INTO pagos (trabajador, monto, fecha, concepto, sede) VALUES ($1, $2, $3, $4, $5)`,
+            [trabajador, monto, fecha, concepto || "", sede]
+        );
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -439,14 +373,13 @@ app.post("/pagos", async (req, res) => {
 });
 
 app.delete("/dia", async (req, res) => {
-    const db = await dbPromise;
     const { fecha, sede } = req.query;
     if (!fecha || !sede) return res.json({ ok: false, error: "Faltan datos" });
     try {
-        await db.exec("BEGIN TRANSACTION");
-        await db.run(`DELETE FROM inventario_diario WHERE fecha = ? AND sede = ?`, [fecha, sede]);
-        await db.run(`DELETE FROM resumen_diario WHERE fecha = ? AND sede = ?`, [fecha, sede]);
-        await db.run(`DELETE FROM ventas_pizzas WHERE fecha = ? AND sede = ?`, [fecha, sede]);
+        await db.exec("BEGIN");
+        await db.run(`DELETE FROM inventario_diario WHERE fecha = $1 AND sede = $2`, [fecha, sede]);
+        await db.run(`DELETE FROM resumen_diario WHERE fecha = $1 AND sede = $2`, [fecha, sede]);
+        await db.run(`DELETE FROM ventas_pizzas WHERE fecha = $1 AND sede = $2`, [fecha, sede]);
         await db.exec("COMMIT");
         res.json({ ok: true });
     } catch (err) {
@@ -456,18 +389,17 @@ app.delete("/dia", async (req, res) => {
 });
 
 app.patch("/dia", async (req, res) => {
-    const db = await dbPromise;
     const { fecha, sede, base, gastos, transferencias, adicionales, descripcion_gastos, descripcion_adicionales, total } = req.body;
     if (!fecha || !sede) return res.json({ ok: false, error: "Faltan datos" });
     try {
         const total_final = Number(total || 0) + Number(base || 0) - Number(transferencias || 0) - Number(gastos || 0) + Number(adicionales || 0);
-        await db.run(`
-            UPDATE resumen_diario
-            SET base = ?, gastos = ?, transferencias = ?, adicionales = ?,
-                descripcion_gastos = ?, descripcion_adicionales = ?, total_final = ?
-            WHERE fecha = ? AND sede = ?
-        `, [Number(base || 0), Number(gastos || 0), Number(transferencias || 0), Number(adicionales || 0),
-            descripcion_gastos || "", descripcion_adicionales || "", total_final, fecha, sede]);
+        await db.run(
+            `UPDATE resumen_diario SET base=$1, gastos=$2, transferencias=$3, adicionales=$4,
+             descripcion_gastos=$5, descripcion_adicionales=$6, total_final=$7
+             WHERE fecha=$8 AND sede=$9`,
+            [Number(base||0), Number(gastos||0), Number(transferencias||0), Number(adicionales||0),
+             descripcion_gastos||"", descripcion_adicionales||"", total_final, fecha, sede]
+        );
         res.json({ ok: true, total_final });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -475,10 +407,9 @@ app.patch("/dia", async (req, res) => {
 });
 
 app.get("/pendientes", async (req, res) => {
-    const db = await dbPromise;
     const { sede } = req.query;
     try {
-        const rows = await db.all(`SELECT * FROM pendientes WHERE sede = ? ORDER BY pagado ASC, fecha DESC`, [sede]);
+        const rows = await db.all(`SELECT * FROM pendientes WHERE sede = $1 ORDER BY pagado ASC, fecha DESC`, [sede]);
         res.json(rows);
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -486,11 +417,13 @@ app.get("/pendientes", async (req, res) => {
 });
 
 app.post("/pendientes", async (req, res) => {
-    const db = await dbPromise;
     const { trabajador, monto, descripcion, sede } = req.body;
     const fecha = new Date().toISOString().split("T")[0];
     try {
-        await db.run(`INSERT INTO pendientes (trabajador, monto, descripcion, fecha, pagado, sede) VALUES (?, ?, ?, ?, 0, ?)`, [trabajador, monto, descripcion || "", fecha, sede]);
+        await db.run(
+            `INSERT INTO pendientes (trabajador, monto, descripcion, fecha, pagado, sede) VALUES ($1, $2, $3, $4, 0, $5)`,
+            [trabajador, monto, descripcion || "", fecha, sede]
+        );
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -498,20 +431,16 @@ app.post("/pendientes", async (req, res) => {
 });
 
 app.patch("/pendientes/:id", async (req, res) => {
-    const db = await dbPromise;
     const { id } = req.params;
     try {
-        // Obtener el pendiente
-        const pendiente = await db.get(`SELECT * FROM pendientes WHERE id = ?`, [id]);
+        const pendiente = await db.get(`SELECT * FROM pendientes WHERE id = $1`, [id]);
         if (!pendiente) return res.json({ ok: false, error: "No encontrado" });
 
-        // Marcarlo como pagado
-        await db.run(`UPDATE pendientes SET pagado = 1 WHERE id = ?`, [id]);
+        await db.run(`UPDATE pendientes SET pagado = 1 WHERE id = $1`, [id]);
 
-        // Registrarlo en historial de pagos
         const fecha = new Date().toISOString().split("T")[0];
         await db.run(
-            `INSERT INTO pagos (trabajador, monto, fecha, concepto, sede) VALUES (?, ?, ?, ?, ?)`,
+            `INSERT INTO pagos (trabajador, monto, fecha, concepto, sede) VALUES ($1, $2, $3, $4, $5)`,
             [pendiente.trabajador, pendiente.monto, fecha, pendiente.descripcion || "Pago pendiente", pendiente.sede]
         );
 
@@ -522,10 +451,9 @@ app.patch("/pendientes/:id", async (req, res) => {
 });
 
 app.delete("/pendientes/:id", async (req, res) => {
-    const db = await dbPromise;
     const { id } = req.params;
     try {
-        await db.run(`DELETE FROM pendientes WHERE id = ?`, [id]);
+        await db.run(`DELETE FROM pendientes WHERE id = $1`, [id]);
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -533,14 +461,14 @@ app.delete("/pendientes/:id", async (req, res) => {
 });
 
 app.get("/pagos", async (req, res) => {
-    const db = await dbPromise;
     const { sede, trabajador, desde, hasta } = req.query;
-    let query = `SELECT * FROM pagos WHERE sede = ?`;
+    let query = `SELECT * FROM pagos WHERE sede = $1`;
     const params = [sede];
-    if (trabajador) { query += ` AND trabajador LIKE ?`; params.push(`%${trabajador}%`); }
-    if (desde && hasta) { query += ` AND fecha BETWEEN ? AND ?`; params.push(desde, hasta); }
-    else if (desde) { query += ` AND fecha >= ?`; params.push(desde); }
-    else if (hasta) { query += ` AND fecha <= ?`; params.push(hasta); }
+    let i = 2;
+    if (trabajador) { query += ` AND trabajador ILIKE $${i++}`; params.push(`%${trabajador}%`); }
+    if (desde && hasta) { query += ` AND fecha BETWEEN $${i++} AND $${i++}`; params.push(desde, hasta); }
+    else if (desde) { query += ` AND fecha >= $${i++}`; params.push(desde); }
+    else if (hasta) { query += ` AND fecha <= $${i++}`; params.push(hasta); }
     query += ` ORDER BY fecha DESC`;
     try {
         const rows = await db.all(query, params);
@@ -551,21 +479,16 @@ app.get("/pagos", async (req, res) => {
 });
 
 app.delete("/pagos/:id", async (req, res) => {
-    const db = await dbPromise;
     const { id } = req.params;
     try {
-        await db.run(`DELETE FROM pagos WHERE id = ?`, [id]);
+        await db.run(`DELETE FROM pagos WHERE id = $1`, [id]);
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
     }
 });
 
-// ------------------------------------------------------
-// GUARDAR TODO DIA — con descuento de cajas por llevar
-// ------------------------------------------------------
 app.post("/guardar-todo", async (req, res) => {
-    const db = await dbPromise;
     let total_dia = 0;
     let total_pizzas = 0;
     let total_bebidas = 0;
@@ -579,48 +502,39 @@ app.post("/guardar-todo", async (req, res) => {
     fecha = normalizarFecha(fecha);
 
     try {
-        const existe = await db.get(`SELECT id FROM resumen_diario WHERE fecha = ? AND sede = ?`, [fecha, sede]);
+        const existe = await db.get(`SELECT id FROM resumen_diario WHERE fecha = $1 AND sede = $2`, [fecha, sede]);
         if (existe) return res.json({ ok: false, error: "DIA_REGISTRADO" });
 
-        await db.exec("BEGIN TRANSACTION");
+        await db.exec("BEGIN");
 
-        // ── GUARDAR PIZZAS EN ventas_pizzas separando mesa y llevar ──────────
         for (let p of productos[0] ? [productos[0]] : []) {
             const tipos = ["tradicional", "vegetariana", "tocino", "carnivora", "petete", "pollo", "cali"];
             for (let tipo of tipos) {
                 const f   = num(p[`${tipo}_familiar`]);
                 const m   = num(p[`${tipo}_mediana`]);
                 const peq = num(p[`${tipo}_pequena`]);
-
                 const fL   = num(p[`${tipo}_familiar_llevar`]);
                 const mL   = num(p[`${tipo}_mediana_llevar`]);
                 const peqL = num(p[`${tipo}_pequena_llevar`]);
-
-                // Pizzas en mesa = total - llevar
                 const fM   = f   - fL;
                 const mM   = m   - mL;
                 const peqM = peq - peqL;
 
-                // Insertar pizzas en mesa
-                if (fM   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES (?, ?, ?, 'familiar', ?, 'mesa')`,  [fecha, sede, tipo, fM]);
-                if (mM   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES (?, ?, ?, 'mediana', ?, 'mesa')`,   [fecha, sede, tipo, mM]);
-                if (peqM > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES (?, ?, ?, 'pequena', ?, 'mesa')`,   [fecha, sede, tipo, peqM]);
-
-                // Insertar pizzas para llevar
-                if (fL   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES (?, ?, ?, 'familiar', ?, 'llevar')`, [fecha, sede, tipo, fL]);
-                if (mL   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES (?, ?, ?, 'mediana', ?, 'llevar')`,  [fecha, sede, tipo, mL]);
-                if (peqL > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES (?, ?, ?, 'pequena', ?, 'llevar')`,  [fecha, sede, tipo, peqL]);
+                if (fM   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'familiar',$4,'mesa')`,  [fecha, sede, tipo, fM]);
+                if (mM   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'mediana',$4,'mesa')`,   [fecha, sede, tipo, mM]);
+                if (peqM > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'pequena',$4,'mesa')`,   [fecha, sede, tipo, peqM]);
+                if (fL   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'familiar',$4,'llevar')`, [fecha, sede, tipo, fL]);
+                if (mL   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'mediana',$4,'llevar')`,  [fecha, sede, tipo, mL]);
+                if (peqL > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'pequena',$4,'llevar')`,  [fecha, sede, tipo, peqL]);
             }
         }
-        // ─────────────────────────────────────────────────────────────────────
 
-        await db.run(`DELETE FROM inventario_diario WHERE fecha = ? AND sede = ?`, [fecha, sede]);
+        await db.run(`DELETE FROM inventario_diario WHERE fecha = $1 AND sede = $2`, [fecha, sede]);
 
-        // GUARDAR MASAS Y BEBIDAS 
         for (let item of productos) {
             if (["Caja grande", "Caja mediana", "Caja pequeña"].includes(item.producto)) continue;
 
-            const prod = await db.get("SELECT precio FROM productos WHERE nombre = ? AND sede = ?", [item.producto, sede]);
+            const prod = await db.get("SELECT precio FROM productos WHERE nombre = $1 AND sede = $2", [item.producto, sede]);
             if (!prod) continue;
 
             const inicial    = num(item.inicial);
@@ -642,26 +556,25 @@ app.post("/guardar-todo", async (req, res) => {
 
             total_dia += total_vendido;
 
-            await db.run(`
-                INSERT INTO inventario_diario
-                (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [fecha, item.producto, inicial, producidas, vendidasSafe, final, total_vendido, sede]);
+            await db.run(
+                `INSERT INTO inventario_diario (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [fecha, item.producto, inicial, producidas, vendidasSafe, final, total_vendido, sede]
+            );
         }
 
-        // ── DESCONTAR CAJAS solo de pizzas llevar ────────────────────────────
         if (productos[0] && productos[0].producto === "Masas") {
             await descontarCajas(db, productos[0], fecha, sede);
         }
-    
 
         const total_final = total_dia + base - transferencias - gastos + adicionales;
 
-        await db.run(`
-            INSERT OR REPLACE INTO resumen_diario
-            (fecha, base, adicionales, gastos, descripcion_gastos, descripcion_adicionales, transferencias, total, total_final, sede)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [fecha, base, adicionales, gastos, descripcion_gastos || "", descripcion_adicionales || "", transferencias, total_dia, total_final, sede]);
+        await db.run(
+            `INSERT INTO resumen_diario (fecha, base, adicionales, gastos, descripcion_gastos, descripcion_adicionales, transferencias, total, total_final, sede)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ON CONFLICT (fecha, sede) DO UPDATE SET base=$2, adicionales=$3, gastos=$4, descripcion_gastos=$5, descripcion_adicionales=$6, transferencias=$7, total=$8, total_final=$9`,
+            [fecha, base, adicionales, gastos, descripcion_gastos||"", descripcion_adicionales||"", transferencias, total_dia, total_final, sede]
+        );
 
         await db.exec("COMMIT");
 
@@ -677,14 +590,10 @@ app.post("/guardar-todo", async (req, res) => {
     }
 });
 
-
-// ── PEDIDOS ──────────────────────────────────────────
-
 app.get("/pedidos", async (req, res) => {
-    const db = await dbPromise;
     const { sede, todos } = req.query;
     try {
-        let query = `SELECT * FROM pedidos WHERE sede = ?`;
+        let query = `SELECT * FROM pedidos WHERE sede = $1`;
         if (!todos) query += ` AND estado != 'entregado'`;
         query += ` ORDER BY id DESC`;
         const rows = await db.all(query, [sede]);
@@ -696,7 +605,6 @@ app.get("/pedidos", async (req, res) => {
 });
 
 app.post("/pedidos", async (req, res) => {
-    const db = await dbPromise;
     const { cliente, telefono, direccion, pizzas, notas, sede } = req.body;
     if (!cliente || !direccion || !pizzas || !sede)
         return res.json({ ok: false, error: "Faltan datos obligatorios" });
@@ -704,8 +612,8 @@ app.post("/pedidos", async (req, res) => {
     try {
         const result = await db.run(
             `INSERT INTO pedidos (cliente, telefono, direccion, pizzas, notas, estado, fecha, sede)
-             VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?)`,
-            [cliente, telefono || "", direccion, JSON.stringify(pizzas), notas || "", fecha, sede]
+             VALUES ($1,$2,$3,$4,$5,'pendiente',$6,$7) RETURNING id`,
+            [cliente, telefono||"", direccion, JSON.stringify(pizzas), notas||"", fecha, sede]
         );
         res.json({ ok: true, id: result.lastID });
     } catch (err) {
@@ -714,15 +622,14 @@ app.post("/pedidos", async (req, res) => {
 });
 
 app.put("/pedidos/:id", async (req, res) => {
-    const db = await dbPromise;
     const { id } = req.params;
     const { cliente, telefono, direccion, pizzas, notas } = req.body;
     if (!cliente || !direccion || !pizzas)
         return res.json({ ok: false, error: "Faltan datos obligatorios" });
     try {
         await db.run(
-            `UPDATE pedidos SET cliente = ?, telefono = ?, direccion = ?, pizzas = ?, notas = ? WHERE id = ?`,
-            [cliente, telefono || "", direccion, JSON.stringify(pizzas), notas || "", id]
+            `UPDATE pedidos SET cliente=$1, telefono=$2, direccion=$3, pizzas=$4, notas=$5 WHERE id=$6`,
+            [cliente, telefono||"", direccion, JSON.stringify(pizzas), notas||"", id]
         );
         res.json({ ok: true });
     } catch (err) {
@@ -731,14 +638,12 @@ app.put("/pedidos/:id", async (req, res) => {
 });
 
 app.patch("/pedidos/:id", async (req, res) => {
-    const db = await dbPromise;
     const { id } = req.params;
     const { estado } = req.body;
-    const estados = ["pendiente", "entregado"];
-    if (!estados.includes(estado))
+    if (!["pendiente", "entregado"].includes(estado))
         return res.json({ ok: false, error: "Estado inválido" });
     try {
-        await db.run(`UPDATE pedidos SET estado = ? WHERE id = ?`, [estado, id]);
+        await db.run(`UPDATE pedidos SET estado=$1 WHERE id=$2`, [estado, id]);
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -746,10 +651,9 @@ app.patch("/pedidos/:id", async (req, res) => {
 });
 
 app.delete("/pedidos/:id", async (req, res) => {
-    const db = await dbPromise;
     const { id } = req.params;
     try {
-        await db.run(`DELETE FROM pedidos WHERE id = ?`, [id]);
+        await db.run(`DELETE FROM pedidos WHERE id=$1`, [id]);
         res.json({ ok: true });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -768,25 +672,20 @@ app.get("/precios-pizzas", (req, res) => {
     });
 });
 
-// ------------------------------------------------------
-// LOGIN
-// ------------------------------------------------------
 app.post("/login", async (req, res) => {
-    const db = await dbPromise;
     const { usuario, password } = req.body;
-    const user = await db.get("SELECT * FROM usuarios WHERE usuario = ?", [usuario]);
+    const user = await db.get("SELECT * FROM usuarios WHERE usuario = $1", [usuario]);
     if (!user) return res.json({ ok: false });
     const match = bcrypt.compareSync(password, user.password);
     res.json({ ok: match, usuario: user.usuario });
 });
 
 app.get("/crear-usuario", async (req, res) => {
-    const db = await dbPromise;
     const { usuario, password } = req.query;
     if (!usuario || !password) return res.json({ ok: false, error: "Faltan datos" });
     const hash = bcrypt.hashSync(password, 10);
     try {
-        await db.run("INSERT INTO usuarios (usuario, password) VALUES (?, ?)", [usuario, hash]);
+        await db.run("INSERT INTO usuarios (usuario, password) VALUES ($1, $2)", [usuario, hash]);
         res.json({ ok: true, mensaje: `Usuario ${usuario} creado` });
     } catch (err) {
         res.json({ ok: false, error: err.message });
@@ -799,50 +698,40 @@ app.get("/crear-usuario", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 (async () => {
-    const db = await dbPromise;
-
-    // Migraciones seguras
-    try { await db.exec(`ALTER TABLE resumen_diario ADD COLUMN descripcion_gastos TEXT`); } catch (e) {}
-    try { await db.exec(`ALTER TABLE resumen_diario ADD COLUMN descripcion_adicionales TEXT`); } catch (e) {}
-    try { await db.exec(`ALTER TABLE resumen_diario RENAME COLUMN extras TO adicionales`); } catch (e) {}
-    try { await db.exec(`ALTER TABLE ventas_pizzas ADD COLUMN modalidad TEXT DEFAULT 'mesa'`); } catch (e) {}
-    try { await db.exec(`ALTER TABLE pedidos ADD COLUMN notas TEXT`); } catch (e) {}
-    // Tablas
-
-
+    // Crear tablas si no existen
     await db.exec(`CREATE TABLE IF NOT EXISTS pedidos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cliente TEXT NOT NULL,
-    telefono TEXT,
-    direccion TEXT NOT NULL,
-    pizzas TEXT NOT NULL,
-    estado TEXT DEFAULT 'pendiente',
-    notas TEXT,
-    fecha TEXT,
-    sede TEXT
-);`);
-
+        id SERIAL PRIMARY KEY,
+        cliente TEXT NOT NULL,
+        telefono TEXT,
+        direccion TEXT NOT NULL,
+        pizzas TEXT NOT NULL,
+        estado TEXT DEFAULT 'pendiente',
+        notas TEXT,
+        fecha TEXT,
+        sede TEXT
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS ventas_pizzas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         fecha TEXT,
         sede TEXT,
         tipo TEXT,
         tamaño TEXT,
         cantidad INTEGER,
         modalidad TEXT DEFAULT 'mesa'
-    );`);
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS productos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         nombre TEXT,
         precio REAL,
         sede TEXT,
-        tipo TEXT DEFAULT 'venta'
-    );`);
+        tipo TEXT DEFAULT 'venta',
+        UNIQUE(nombre, sede)
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS resumen_diario (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         fecha TEXT,
         base REAL DEFAULT 0,
         adicionales REAL DEFAULT 0,
@@ -854,10 +743,10 @@ const PORT = process.env.PORT || 3000;
         total_final REAL DEFAULT 0,
         sede TEXT,
         UNIQUE(fecha, sede)
-    );`);
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS inventario_diario (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         fecha TEXT,
         producto TEXT,
         inicial INTEGER,
@@ -866,32 +755,32 @@ const PORT = process.env.PORT || 3000;
         final INTEGER,
         total_vendido REAL,
         sede TEXT
-    );`);
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS usuarios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         usuario TEXT UNIQUE,
         password TEXT
-    );`);
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS pendientes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         trabajador TEXT,
         monto REAL,
         descripcion TEXT,
         fecha TEXT,
         pagado INTEGER DEFAULT 0,
         sede TEXT
-    );`);
+    )`);
 
     await db.exec(`CREATE TABLE IF NOT EXISTS pagos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         trabajador TEXT,
         monto REAL,
         fecha TEXT,
         concepto TEXT,
         sede TEXT
-    );`);
+    )`);
 
     console.log("DB lista");
     app.listen(PORT, "0.0.0.0", () => console.log("Servidor corriendo en puerto " + PORT));
