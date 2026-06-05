@@ -225,8 +225,11 @@ app.get("/resumen", async (req, res) => {
 app.get("/stock-actual", async (req, res) => {
     const { sede } = req.query;
     const rows = await db.all(
-        `SELECT producto, final FROM inventario_diario
-         WHERE id IN (SELECT MAX(id) FROM inventario_diario WHERE sede = $1 GROUP BY producto)`,
+        `SELECT p.nombre as producto, 
+         COALESCE((SELECT final FROM inventario_diario 
+                   WHERE producto = p.nombre AND sede = $1 
+                   ORDER BY id DESC LIMIT 1), 0) as final
+         FROM productos p WHERE p.sede = $1 AND p.tipo = 'venta'`,
         [sede]
     );
     res.json(rows);
