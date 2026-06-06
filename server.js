@@ -672,6 +672,43 @@ app.get("/precios-pizzas", (req, res) => {
     });
 });
 
+
+// ── RECETAS ──────────────────────────────────────────
+app.get("/recetas", async (req, res) => {
+    const { sede } = req.query;
+    try {
+        const rows = await db.all(`SELECT * FROM recetas WHERE sede = $1 ORDER BY insumo ASC`, [sede]);
+        res.json(rows);
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+app.post("/recetas", async (req, res) => {
+    const { insumo, cantidad, masas_por_unidad, sede } = req.body;
+    try {
+        await db.run(
+            `INSERT INTO recetas (insumo, cantidad, masas_por_unidad, sede) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (insumo, sede) DO UPDATE SET cantidad=$2, masas_por_unidad=$3`,
+            [insumo, cantidad, masas_por_unidad, sede]
+        );
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+app.delete("/recetas/:id", async (req, res) => {
+    const { id } = req.params;
+    try {
+        await db.run(`DELETE FROM recetas WHERE id = $1`, [id]);
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+
 app.post("/login", async (req, res) => {
     const { usuario, password } = req.body;
     const user = await db.get("SELECT * FROM usuarios WHERE usuario = $1", [usuario]);
@@ -781,6 +818,15 @@ const PORT = process.env.PORT || 3000;
         concepto TEXT,
         sede TEXT
     )`);
+
+    await db.exec(`CREATE TABLE IF NOT EXISTS recetas (
+    id SERIAL PRIMARY KEY,
+    insumo TEXT,
+    cantidad REAL,
+    masas_por_unidad REAL,
+    sede TEXT,
+    UNIQUE(insumo, sede)
+)`);
 
     console.log("DB lista");
     app.listen(PORT, "0.0.0.0", () => console.log("Servidor corriendo en puerto " + PORT));
