@@ -1,5 +1,5 @@
 require("dotenv").config();
-process.env.DATABASE_URL = "postgresql://postgres.rpwnbwuelsimnislbflz:Yurani1518-@aws-1-sa-east-1.pooler.supabase.com:5432/postgres";
+process.env.DATABASE_URL = "postgresql://postgres.rpwnbwuelsimnislbflz:Yurani1518-@aws-1-sa-east-1.pooler.supabase.com:6543/postgres";
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
