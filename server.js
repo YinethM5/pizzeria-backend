@@ -808,14 +808,13 @@ const PORT = process.env.PORT || 3000;
         id SERIAL PRIMARY KEY,
         fecha TEXT,
         producto TEXT,
-        inicial INTEGER,
-        producidas INTEGER,
-        vendidas INTEGER,
-        final INTEGER,
+        inicial REAL,
+        producidas REAL,
+        vendidas REAL,
+        final REAL,
         total_vendido REAL,
         sede TEXT
     )`);
-
     await db.exec(`CREATE TABLE IF NOT EXISTS usuarios (
         id SERIAL PRIMARY KEY,
         usuario TEXT UNIQUE,
