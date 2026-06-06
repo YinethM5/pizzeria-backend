@@ -751,6 +751,19 @@ app.get("/crear-usuario", async (req, res) => {
     }
 });
 
+
+app.get("/fix-columnas", async (req, res) => {
+    try {
+        await db.exec(`ALTER TABLE inventario_diario 
+            ALTER COLUMN inicial TYPE REAL USING inicial::REAL,
+            ALTER COLUMN producidas TYPE REAL USING producidas::REAL,
+            ALTER COLUMN vendidas TYPE REAL USING vendidas::REAL,
+            ALTER COLUMN final TYPE REAL USING final::REAL`);
+        res.json({ ok: true, mensaje: "Columnas actualizadas" });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
 // ------------------------------------------------------
 // INICIAR SERVER
 // ------------------------------------------------------
