@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "82545c85-3380-4c93-ae0b-1530d690862c"
+      }
+    },
+    "android": {
+      "package": "com.yineth.pizzeriabackend"
+    }
+  }
+}

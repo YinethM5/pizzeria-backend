@@ -53,7 +53,7 @@ function calc(inicial, producidas, queda) {
     };
 }
 
-function calcularTotalMasas(data) {
+async function calcularTotalMasas(data) {
     const vendidas = Number(data.vendidas || 0);
     let total = vendidas * 11.25;
 
@@ -68,15 +68,11 @@ function calcularTotalMasas(data) {
     const base = 11.25;
     const base_pequena = base / 2;
 
-    const pizzas = {
-        vegetariana: { f: 13.50, m: 12.00, p: 8.50 },
-        tocino: { f: 12.50, m: 11.00, p: 7.50 },
-        carnivora: { f: 15.00, m: 13.50, p: 8.50 },
-        pollo: { f: 16.00, m: 14.50, p: 9.00 },
-        petete: { f: 16.00, m: 14.50, p: 9.00 },
-        cali: { f: 15.00, m: 13.50, p: 8.50 }
-    };
-
+    const rows = await db.all(`SELECT * FROM precios_pizzas`);
+const pizzas = {};
+for (const r of rows) {
+    pizzas[r.tipo] = { f: r.familiar, m: r.mediana, p: r.pequena };
+}
     for (let tipo in pizzas) {
         const p = pizzas[tipo];
         const f = Number(data[`${tipo}_familiar`] || 0);
@@ -98,13 +94,13 @@ async function descontarCajas(db, masasData, fecha, sede) {
     let pequeñasLlevar = 0;
 
     for (const tipo of tipos) {
-        grandesLlevar  += num(masasData[`${tipo}_familiar_llevar`]);
+        grandesLlevar += num(masasData[`${tipo}_familiar_llevar`]);
         medianasLlevar += num(masasData[`${tipo}_mediana_llevar`]);
         pequeñasLlevar += num(masasData[`${tipo}_pequena_llevar`]);
     }
 
     const cajas = [
-        { producto: "Caja grande",  cantidad: grandesLlevar  },
+        { producto: "Caja grande", cantidad: grandesLlevar },
         { producto: "Caja mediana", cantidad: medianasLlevar },
         { producto: "Caja pequeña", cantidad: pequeñasLlevar },
     ];
@@ -116,7 +112,7 @@ async function descontarCajas(db, masasData, fecha, sede) {
         );
 
         const inicial = anterior ? anterior.final : 0;
-        const final   = inicial - cantidad;
+        const final = inicial - cantidad;
 
         if (final < 0) {
             throw new Error(`No hay suficientes ${producto} (necesitas ${cantidad}, hay ${inicial})`);
@@ -251,12 +247,12 @@ app.get("/ingredientes", async (req, res) => {
 
 app.get("/seed-ingredientes", async (req, res) => {
     const ingredientes = [
-        "Mortadela","Queso","Peperoni","Piña","Harina","Levadura","Azúcar","Mantequilla","Sal",
-        "Cajas","Salsa de tomate","Maiz Sabrosa","Porta pizza","Platos de torta número 6",
-        "Funda de aluminio","Fundas de basura","Fundas dina negra","Fundas dina blanca",
-        "Vasos","Fundas de bolos","Óregano","Salami","Servilletas","Jamón",
-        "Tachos de Mayonesa","Caja de schet mayonesa","Caja de schet salsatomate",
-        "Maíz","Champiñones","Tocino"
+        "Mortadela", "Queso", "Peperoni", "Piña", "Harina", "Levadura", "Azúcar", "Mantequilla", "Sal",
+        "Cajas", "Salsa de tomate", "Maiz Sabrosa", "Porta pizza", "Platos de torta número 6",
+        "Funda de aluminio", "Fundas de basura", "Fundas dina negra", "Fundas dina blanca",
+        "Vasos", "Fundas de bolos", "Óregano", "Salami", "Servilletas", "Jamón",
+        "Tachos de Mayonesa", "Caja de schet mayonesa", "Caja de schet salsatomate",
+        "Maíz", "Champiñones", "Tocino"
     ];
     for (const nombre of ingredientes) {
         await db.run(`INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, 0, 'sede1', 'ingrediente') ON CONFLICT DO NOTHING`, [nombre]);
@@ -308,7 +304,7 @@ app.post("/inventario", async (req, res) => {
     }
 
     let total_vendido = vendidas * prod.precio;
-    if (producto === "Masas") total_vendido = calcularTotalMasas({ vendidas, ...req.body });
+    if (producto === "Masas") total_vendido = await calcularTotalMasas({ vendidas, ...req.body });
 
     await db.run(
         `INSERT INTO inventario_diario (fecha, producto, inicial, producidas, vendidas, final, total_vendido, sede)
@@ -396,8 +392,8 @@ app.patch("/dia", async (req, res) => {
             `UPDATE resumen_diario SET base=$1, gastos=$2, transferencias=$3, adicionales=$4,
              descripcion_gastos=$5, descripcion_adicionales=$6, total_final=$7
              WHERE fecha=$8 AND sede=$9`,
-            [Number(base||0), Number(gastos||0), Number(transferencias||0), Number(adicionales||0),
-             descripcion_gastos||"", descripcion_adicionales||"", total_final, fecha, sede]
+            [Number(base || 0), Number(gastos || 0), Number(transferencias || 0), Number(adicionales || 0),
+            descripcion_gastos || "", descripcion_adicionales || "", total_final, fecha, sede]
         );
         res.json({ ok: true, total_final });
     } catch (err) {
@@ -509,22 +505,22 @@ app.post("/guardar-todo", async (req, res) => {
         for (let p of productos[0] ? [productos[0]] : []) {
             const tipos = ["tradicional", "vegetariana", "tocino", "carnivora", "petete", "pollo", "cali"];
             for (let tipo of tipos) {
-                const f   = num(p[`${tipo}_familiar`]);
-                const m   = num(p[`${tipo}_mediana`]);
+                const f = num(p[`${tipo}_familiar`]);
+                const m = num(p[`${tipo}_mediana`]);
                 const peq = num(p[`${tipo}_pequena`]);
-                const fL   = num(p[`${tipo}_familiar_llevar`]);
-                const mL   = num(p[`${tipo}_mediana_llevar`]);
+                const fL = num(p[`${tipo}_familiar_llevar`]);
+                const mL = num(p[`${tipo}_mediana_llevar`]);
                 const peqL = num(p[`${tipo}_pequena_llevar`]);
-                const fM   = f   - fL;
-                const mM   = m   - mL;
+                const fM = f - fL;
+                const mM = m - mL;
                 const peqM = peq - peqL;
 
-                if (fM   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'familiar',$4,'mesa')`,  [fecha, sede, tipo, fM]);
-                if (mM   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'mediana',$4,'mesa')`,   [fecha, sede, tipo, mM]);
-                if (peqM > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'pequena',$4,'mesa')`,   [fecha, sede, tipo, peqM]);
-                if (fL   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'familiar',$4,'llevar')`, [fecha, sede, tipo, fL]);
-                if (mL   > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'mediana',$4,'llevar')`,  [fecha, sede, tipo, mL]);
-                if (peqL > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'pequena',$4,'llevar')`,  [fecha, sede, tipo, peqL]);
+                if (fM > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'familiar',$4,'mesa')`, [fecha, sede, tipo, fM]);
+                if (mM > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'mediana',$4,'mesa')`, [fecha, sede, tipo, mM]);
+                if (peqM > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'pequena',$4,'mesa')`, [fecha, sede, tipo, peqM]);
+                if (fL > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'familiar',$4,'llevar')`, [fecha, sede, tipo, fL]);
+                if (mL > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'mediana',$4,'llevar')`, [fecha, sede, tipo, mL]);
+                if (peqL > 0) await db.run(`INSERT INTO ventas_pizzas (fecha, sede, tipo, tamaño, cantidad, modalidad) VALUES ($1,$2,$3,'pequena',$4,'llevar')`, [fecha, sede, tipo, peqL]);
             }
         }
 
@@ -536,9 +532,9 @@ app.post("/guardar-todo", async (req, res) => {
             const prod = await db.get("SELECT precio FROM productos WHERE nombre = $1 AND sede = $2", [item.producto, sede]);
             if (!prod) continue;
 
-            const inicial    = num(item.inicial);
+            const inicial = num(item.inicial);
             const producidas = num(item.producidas);
-            const queda      = num(item.queda);
+            const queda = num(item.queda);
             const { total, vendidas, final } = calc(inicial, producidas, queda);
 
             if (queda > total) throw new Error(`Stock inválido en ${item.producto}`);
@@ -547,7 +543,7 @@ app.post("/guardar-todo", async (req, res) => {
             let total_vendido = vendidas * prod.precio;
 
             if (item.producto === "Masas") {
-                total_vendido = calcularTotalMasas({ vendidas, ...item });
+    total_vendido = await calcularTotalMasas({ vendidas, ...item });
                 total_pizzas += total_vendido;
             } else {
                 total_bebidas += total_vendido;
@@ -572,7 +568,7 @@ app.post("/guardar-todo", async (req, res) => {
             `INSERT INTO resumen_diario (fecha, base, adicionales, gastos, descripcion_gastos, descripcion_adicionales, transferencias, total, total_final, sede)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
              ON CONFLICT (fecha, sede) DO UPDATE SET base=$2, adicionales=$3, gastos=$4, descripcion_gastos=$5, descripcion_adicionales=$6, transferencias=$7, total=$8, total_final=$9`,
-            [fecha, base, adicionales, gastos, descripcion_gastos||"", descripcion_adicionales||"", transferencias, total_dia, total_final, sede]
+            [fecha, base, adicionales, gastos, descripcion_gastos || "", descripcion_adicionales || "", transferencias, total_dia, total_final, sede]
         );
 
         await db.exec("COMMIT");
@@ -612,7 +608,7 @@ app.post("/pedidos", async (req, res) => {
         const result = await db.run(
             `INSERT INTO pedidos (cliente, telefono, direccion, pizzas, notas, estado, fecha, sede)
              VALUES ($1,$2,$3,$4,$5,'pendiente',$6,$7) RETURNING id`,
-            [cliente, telefono||"", direccion, JSON.stringify(pizzas), notas||"", fecha, sede]
+            [cliente, telefono || "", direccion, JSON.stringify(pizzas), notas || "", fecha, sede]
         );
         res.json({ ok: true, id: result.lastID });
     } catch (err) {
@@ -628,7 +624,7 @@ app.put("/pedidos/:id", async (req, res) => {
     try {
         await db.run(
             `UPDATE pedidos SET cliente=$1, telefono=$2, direccion=$3, pizzas=$4, notas=$5 WHERE id=$6`,
-            [cliente, telefono||"", direccion, JSON.stringify(pizzas), notas||"", id]
+            [cliente, telefono || "", direccion, JSON.stringify(pizzas), notas || "", id]
         );
         res.json({ ok: true });
     } catch (err) {
@@ -659,16 +655,138 @@ app.delete("/pedidos/:id", async (req, res) => {
     }
 });
 
-app.get("/precios-pizzas", (req, res) => {
-    res.json({
-        tradicional: { f: 11.00, m: 9.75,  p: 6.00  },
-        vegetariana:  { f: 13.50, m: 12.00, p: 8.50  },
-        tocino:       { f: 12.50, m: 11.00, p: 7.50  },
-        carnivora:    { f: 15.00, m: 13.50, p: 8.50  },
-        pollo:        { f: 16.00, m: 14.50, p: 9.00  },
-        petete:       { f: 16.00, m: 14.50, p: 9.00  },
-        cali:         { f: 15.00, m: 13.50, p: 8.50  },
-    });
+
+
+// ---------------- GESTIÓN DE PRODUCTOS ----------------
+
+app.post("/productos", async (req, res) => {
+    const { nombre, precio, sede } = req.body;
+    if (!nombre || precio === undefined || !sede)
+        return res.json({ ok: false, error: "Faltan datos" });
+    try {
+        await db.run(
+            `INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, $2, $3, 'venta')`,
+            [nombre.trim(), Number(precio), sede]
+        );
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: "Ya existe un producto con ese nombre en esta sede" });
+    }
+});
+
+app.delete("/productos/:nombre", async (req, res) => {
+    const { nombre } = req.params;
+    const { sede } = req.query;
+    if (!sede) return res.json({ ok: false, error: "Falta sede" });
+    try {
+        const result = await db.run(
+            `DELETE FROM productos WHERE nombre = $1 AND sede = $2 AND tipo = 'venta'`,
+            [nombre, sede]
+        );
+        if (result.changes === 0)
+            return res.json({ ok: false, error: "Producto no encontrado" });
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+app.patch("/productos/:nombre", async (req, res) => {
+    const { nombre } = req.params;
+    const { sede, nuevoNombre, precio } = req.body;
+    if (!sede) return res.json({ ok: false, error: "Falta sede" });
+    try {
+        if (nuevoNombre !== undefined) {
+            await db.run(
+                `UPDATE productos SET nombre = $1 WHERE nombre = $2 AND sede = $3 AND tipo = 'venta'`,
+                [nuevoNombre.trim(), nombre, sede]
+            );
+        }
+        if (precio !== undefined) {
+            await db.run(
+                `UPDATE productos SET precio = $1 WHERE nombre = $2 AND sede = $3 AND tipo = 'venta'`,
+                [Number(precio), nuevoNombre?.trim() || nombre, sede]
+            );
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+// ---------------- GESTIÓN DE INGREDIENTES ----------------
+
+app.post("/ingredientes", async (req, res) => {
+    const { nombre, sede } = req.body;
+    if (!nombre || !sede) return res.json({ ok: false, error: "Faltan datos" });
+    try {
+        await db.run(
+            `INSERT INTO productos (nombre, precio, sede, tipo) VALUES ($1, 0, $2, 'ingrediente')`,
+            [nombre.trim(), sede]
+        );
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: "Ya existe un ingrediente con ese nombre en esta sede" });
+    }
+});
+
+app.delete("/ingredientes/:nombre", async (req, res) => {
+    const { nombre } = req.params;
+    const { sede } = req.query;
+    if (!sede) return res.json({ ok: false, error: "Falta sede" });
+    try {
+        const result = await db.run(
+            `DELETE FROM productos WHERE nombre = $1 AND sede = $2 AND tipo = 'ingrediente'`,
+            [nombre, sede]
+        );
+        if (result.changes === 0)
+            return res.json({ ok: false, error: "Ingrediente no encontrado" });
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+app.patch("/ingredientes/:nombre", async (req, res) => {
+    const { nombre } = req.params;
+    const { sede, nuevoNombre } = req.body;
+    if (!sede || !nuevoNombre) return res.json({ ok: false, error: "Faltan datos" });
+    try {
+        await db.run(
+            `UPDATE productos SET nombre = $1 WHERE nombre = $2 AND sede = $3 AND tipo = 'ingrediente'`,
+            [nuevoNombre.trim(), nombre, sede]
+        );
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+app.get("/precios-pizzas", async (req, res) => {
+    try {
+        const rows = await db.all(`SELECT * FROM precios_pizzas ORDER BY tipo`);
+        res.json(rows);
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
+});
+
+app.patch("/precios-pizzas/:tipo", async (req, res) => {
+    const { tipo } = req.params;
+    const { familiar, mediana, pequena } = req.body;
+    if (familiar === undefined && mediana === undefined && pequena === undefined)
+        return res.json({ ok: false, error: "Faltan datos" });
+    try {
+        if (familiar !== undefined)
+            await db.run(`UPDATE precios_pizzas SET familiar=$1 WHERE tipo=$2`, [Number(familiar), tipo]);
+        if (mediana !== undefined)
+            await db.run(`UPDATE precios_pizzas SET mediana=$1 WHERE tipo=$2`, [Number(mediana), tipo]);
+        if (pequena !== undefined)
+            await db.run(`UPDATE precios_pizzas SET pequena=$1 WHERE tipo=$2`, [Number(pequena), tipo]);
+        res.json({ ok: true });
+    } catch (err) {
+        res.json({ ok: false, error: err.message });
+    }
 });
 
 app.post("/login", async (req, res) => {
@@ -780,7 +898,31 @@ const PORT = process.env.PORT || 3000;
         concepto TEXT,
         sede TEXT
     )`);
+    await db.exec(`CREATE TABLE IF NOT EXISTS precios_pizzas (
+    id SERIAL PRIMARY KEY,
+    tipo TEXT NOT NULL,
+    familiar REAL NOT NULL,
+    mediana REAL NOT NULL,
+    pequena REAL NOT NULL,
+    UNIQUE(tipo)
+)`);
 
+    // Insertar precios por defecto si la tabla está vacía
+    const count = await db.get(`SELECT COUNT(*) as c FROM precios_pizzas`);
+    if (Number(count.c) === 0) {
+        const defaults = [
+            ["tradicional", 11.00, 9.75, 6.00],
+            ["vegetariana", 13.50, 12.00, 8.50],
+            ["tocino", 12.50, 11.00, 7.50],
+            ["carnivora", 15.00, 13.50, 8.50],
+            ["pollo", 16.00, 14.50, 9.00],
+            ["petete", 16.00, 14.50, 9.00],
+            ["cali", 15.00, 13.50, 8.50],
+        ];
+        for (const [tipo, f, m, p] of defaults) {
+            await db.run(`INSERT INTO precios_pizzas (tipo, familiar, mediana, pequena) VALUES ($1,$2,$3,$4)`, [tipo, f, m, p]);
+        }
+    }
     console.log("DB lista");
     app.listen(PORT, "0.0.0.0", () => console.log("Servidor corriendo en puerto " + PORT));
 })();
