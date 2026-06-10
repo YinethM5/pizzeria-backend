@@ -697,12 +697,6 @@ app.get("/crear-usuario", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 (async () => {
-
-    await db.exec(`
-    TRUNCATE inventario_diario, resumen_diario, ventas_pizzas, 
-             pedidos, pagos, pendientes, productos, usuarios 
-    RESTART IDENTITY CASCADE;
-`);
     // Crear tablas si no existen
     await db.exec(`CREATE TABLE IF NOT EXISTS pedidos (
         id SERIAL PRIMARY KEY,
